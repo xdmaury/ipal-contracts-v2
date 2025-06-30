@@ -25,13 +25,9 @@ contract KnowledgeMarket is Initializable, ERC721Enumerable, ReentrancyGuard, Kn
 
     event AccessGranted(address indexed vaultOwner, string vaultId, address indexed customer, uint256 tokenId, uint256 price);
 
-    error AlreadyInitialized();
     error MintUnavailable();
-    error ExpirationOverflow();
+    error ExpirationOverflow(); // Raised if expiration exceeds uint32 max
     error InsufficientFunds(uint256 required);
-    error TreasuryTransferFailed();
-    error CoOwnerTransferFailed();
-    error VaultOwnerTransferFailed();
 
     constructor() ERC721("Knowledge Access", "KNW") {}
 
@@ -79,6 +75,7 @@ contract KnowledgeMarket is Initializable, ERC721Enumerable, ReentrancyGuard, Kn
 
         // Mint the NFT
         _safeMint(to, tokenId);
+        vaultAccess[hash][to] = tokenId;
 
         emit AccessGranted(vaultOwner, vaultId, to, tokenId, set.price);
     }
@@ -88,30 +85,44 @@ contract KnowledgeMarket is Initializable, ERC721Enumerable, ReentrancyGuard, Kn
         Settings memory set,
         uint256 amount
     ) private {
-        uint256 remainig = amount;
+        uint256 remaining = amount;
 
-        uint256 feeAmount = (set.price * platformFee) / 10000;
+        uint256 feeAmount = (amount * platformFee) / 10000;
         if (feeAmount > 0) {
-            (bool feeSuccess, ) = treasury.call{value: feeAmount}("");
-            if (!feeSuccess) revert TreasuryTransferFailed();
-            remainig -= feeAmount;
+            treasury.transfer(feeAmount);
+            remaining -= feeAmount;
         }
         if (set.coOwner != address(0) && set.splitFee > 0) {
-            uint256 coPart = (remainig * set.splitFee) / 10000;
-            remainig -= coPart;
-
-            (bool coSuccess, ) = set.coOwner.call{value: coPart}("");
-            if (!coSuccess) revert CoOwnerTransferFailed();
+            uint256 coPart = (remaining * set.splitFee) / 10000;
+            remaining -= coPart;
+            payable(set.coOwner).transfer(coPart);
         }
-        if (remainig > 0) {
-            (bool ownerSuccess, ) = vaultOwner.call{value: remainig}("");
-            if (!ownerSuccess) revert VaultOwnerTransferFailed();
+        if (remaining > 0) {
+            vaultOwner.transfer(remaining);
         }
     }
+    
+    function hasAccess(
+        address vaultOwner,
+        string calldata vaultId,
+        address user
+    ) external view returns (bool) {
+        if (vaultOwner == address(0) || user == address(0)) return false;
 
-    // This function isn't used in the DApp.
+        bytes32 hash = _vaultHash(vaultOwner, vaultId);
+        uint256 tokenId = vaultAccess[hash][user];
+
+        try ERC721(address(this)).ownerOf(tokenId) returns (address tokenOwner) {
+            if (tokenOwner != user) return false;
+        } catch {
+            return false;
+        }
+
+        return block.timestamp <= nftData[tokenId].expirationTime;
+    }
+
     function tokenURI(uint256 tokenId) public view override returns (string memory) {
-        require(_ownerOf(tokenId) != address(0), "KnowledgeMarket: URI query for nonexistent token");
+        require(ownerOf(tokenId) != address(0), "KnowledgeMarket: URI query for nonexistent token");
 
         Metadata memory data = nftData[tokenId];
         string memory image = bytes(dealInfo[tokenId].imageURL).length > 0 ? dealInfo[tokenId].imageURL : DEFAULT_IMAGE;
