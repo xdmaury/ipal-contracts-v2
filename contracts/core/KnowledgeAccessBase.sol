@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
-import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 
 /// @notice Base contract with logic and storage for subscription access
 abstract contract KnowledgeAccessBase {
@@ -25,6 +24,7 @@ abstract contract KnowledgeAccessBase {
     mapping(bytes32 => Settings) public accessControl;
     mapping(uint256 => Metadata) public nftData;
     mapping(address => Subscription[]) public subscriptions;
+    mapping(bytes32 => mapping(address => uint256)) public vaultAccess;
 
     error ZeroAddress();
     error EmptyVaultId();
@@ -99,26 +99,6 @@ abstract contract KnowledgeAccessBase {
         }
     }
 
-    function hasAccess(
-        address vaultOwner,
-        string calldata vaultId,
-        address user
-    ) external view returns (bool) {
-        if (vaultOwner == address(0) || user == address(0)) return false;
-
-        bytes32 hash = _vaultHash(vaultOwner, vaultId);
-        for (uint i = 0; i < ERC721Enumerable(address(this)).balanceOf(user); i++ ) {
-            uint256 tokenId = ERC721Enumerable(address(this)).tokenOfOwnerByIndex(user, i);
-            if (
-                nftData[tokenId].hash == hash &&
-                block.timestamp <= nftData[tokenId].expirationTime
-            ) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     function getAccessControl(
         address author,
         string calldata vaultId
@@ -147,5 +127,6 @@ abstract contract KnowledgeAccessBase {
         return subscriptions[owner];
     }
 
+    /// @notice Should return the default image used when none is provided in the subscription
     function defaultImage() public view virtual returns (string memory);
 }
